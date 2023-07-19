@@ -1,15 +1,5 @@
 # Frequently Asked Questions
 
-## How do I use DataJoint with a GUI?
-
-It is common to enter data during experiments using a graphical user interface.
-
-1. [DataJoint LabBook](https://github.com/datajoint/datajoint-labbook) is an open 
-source project for data entry.
-
-2. The DataJoint Works platform is set up as a fully managed service to host and 
-execute data pipelines.
-
 ## Does DataJoint support other programming languages?
 
 DataJoint [Python](https://datajoint.com/docs/core/datajoint-python/) and 
