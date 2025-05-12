@@ -1,10 +1,13 @@
-import pytest
-import datajoint.errors as djerr
-import datajoint.plugin as p
-import pkg_resources
 from os import path
 
+import pkg_resources
+import pytest
 
+import datajoint.errors as djerr
+import datajoint.plugin as p
+
+
+@pytest.mark.skip(reason="marked for deprecation")
 def test_check_pubkey():
     base_name = "datajoint"
     base_meta = pkg_resources.get_distribution(base_name)

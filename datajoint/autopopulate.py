@@ -1,17 +1,20 @@
 """This module defines class dj.AutoPopulate"""
 
-import logging
-import datetime
-import traceback
-import random
-import inspect
-from tqdm import tqdm
-from .hash import key_hash
-from .expression import QueryExpression, AndList
-from .errors import DataJointError, LostConnectionError
-import signal
-import multiprocessing as mp
 import contextlib
+import datetime
+import inspect
+import logging
+import multiprocessing as mp
+import random
+import signal
+import traceback
+
+import deepdiff
+from tqdm import tqdm
+
+from .errors import DataJointError, LostConnectionError
+from .expression import AndList, QueryExpression
+from .hash import key_hash
 
 # noinspection PyExceptionInherit,PyCallingNonCallable
 
@@ -23,7 +26,7 @@ logger = logging.getLogger(__name__.split(".")[0])
 
 def _initialize_populate(table, jobs, populate_kwargs):
     """
-    Initialize the process for mulitprocessing.
+    Initialize the process for multiprocessing.
     Saves the unpickled copy of the table to the current process and reconnects.
     """
     process = mp.current_process()
@@ -153,6 +156,7 @@ class AutoPopulate:
     def populate(
         self,
         *restrictions,
+        keys=None,
         suppress_errors=False,
         return_exception_objects=False,
         reserve_jobs=False,
@@ -169,6 +173,8 @@ class AutoPopulate:
 
         :param restrictions: a list of restrictions each restrict
             (table.key_source - target.proj())
+        :param keys: The list of keys (dicts) to send to self.make().
+            If None (default), then use self.key_source to query they keys.
         :param suppress_errors: if True, do not terminate execution.
         :param return_exception_objects: return error objects instead of just error messages
         :param reserve_jobs: if True, reserve jobs to populate in asynchronous fashion
@@ -206,7 +212,10 @@ class AutoPopulate:
 
             old_handler = signal.signal(signal.SIGTERM, handler)
 
-        keys = (self._jobs_to_do(restrictions) - self.target).fetch("KEY", limit=limit)
+        if keys is None:
+            keys = (self._jobs_to_do(restrictions) - self.target).fetch(
+                "KEY", limit=limit
+            )
 
         # exclude "error", "ignore" or "reserved" jobs
         if reserve_jobs:
@@ -256,13 +265,16 @@ class AutoPopulate:
                 # spawn multiple processes
                 self.connection.close()  # disconnect parent process from MySQL server
                 del self.connection._conn.ctx  # SSLContext is not pickleable
-                with mp.Pool(
-                    processes, _initialize_populate, (self, jobs, populate_kwargs)
-                ) as pool, (
-                    tqdm(desc="Processes: ", total=nkeys)
-                    if display_progress
-                    else contextlib.nullcontext()
-                ) as progress_bar:
+                with (
+                    mp.Pool(
+                        processes, _initialize_populate, (self, jobs, populate_kwargs)
+                    ) as pool,
+                    (
+                        tqdm(desc="Processes: ", total=nkeys)
+                        if display_progress
+                        else contextlib.nullcontext()
+                    ) as progress_bar,
+                ):
                     for status in pool.imap(_call_populate1, keys, chunksize=1):
                         if status is True:
                             success_list.append(1)
@@ -295,6 +307,7 @@ class AutoPopulate:
         :return: (key, error) when suppress_errors=True,
             True if successfully invoke one `make()` call, otherwise False
         """
+        # use the legacy `_make_tuples` callback.
         make = self._make_tuples if hasattr(self, "_make_tuples") else self.make
 
         if jobs is not None and not jobs.reserve(
@@ -302,17 +315,46 @@ class AutoPopulate:
         ):
             return False
 
-        self.connection.start_transaction()
+        # if make is a generator, it transaction can be delayed until the final stage
+        is_generator = inspect.isgeneratorfunction(make)
+        if not is_generator:
+            self.connection.start_transaction()
+
         if key in self.target:  # already populated
-            self.connection.cancel_transaction()
+            if not is_generator:
+                self.connection.cancel_transaction()
             if jobs is not None:
                 jobs.complete(self.target.table_name, self._job_key(key))
             return False
 
         logger.debug(f"Making {key} -> {self.target.full_table_name}")
         self.__class__._allow_insert = True
+
         try:
-            make(dict(key), **(make_kwargs or {}))
+            if not is_generator:
+                make(dict(key), **(make_kwargs or {}))
+            else:
+                # tripartite make - transaction is delayed until the final stage
+                gen = make(dict(key), **(make_kwargs or {}))
+                fetched_data = next(gen)
+                fetch_hash = deepdiff.DeepHash(
+                    fetched_data, ignore_iterable_order=False
+                )[fetched_data]
+                computed_result = next(gen)  # perform the computation
+                # fetch and insert inside a transaction
+                self.connection.start_transaction()
+                gen = make(dict(key), **(make_kwargs or {}))  # restart make
+                fetched_data = next(gen)
+                if (
+                    fetch_hash
+                    != deepdiff.DeepHash(fetched_data, ignore_iterable_order=False)[
+                        fetched_data
+                    ]
+                ):  # rollback due to referential integrity fail
+                    self.connection.cancel_transaction()
+                    return False
+                gen.send(computed_result)  # insert
+
         except (KeyboardInterrupt, SystemExit, Exception) as error:
             try:
                 self.connection.cancel_transaction()

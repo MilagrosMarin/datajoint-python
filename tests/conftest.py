@@ -1,30 +1,27 @@
-import datajoint as dj
-from packaging import version
-from typing import Dict, List
-import os
-from os import environ, remove
-import minio
-import urllib3
-import certifi
-import shutil
-import pytest
-import networkx as nx
 import json
+import os
+import shutil
+from os import environ, remove
 from pathlib import Path
+from typing import Dict, List
+
+import certifi
+import minio
+import networkx as nx
+import pytest
+import urllib3
+from packaging import version
+
+import datajoint as dj
 from datajoint import errors
 from datajoint.errors import (
     ADAPTED_TYPE_SWITCH,
     FILEPATH_FEATURE_SWITCH,
     DataJointError,
 )
-from . import (
-    schema,
-    schema_simple,
-    schema_advanced,
-    schema_adapted,
-    schema_external,
-    schema_uuid as schema_uuid_module,
-)
+
+from . import schema, schema_adapted, schema_advanced, schema_external, schema_simple
+from . import schema_uuid as schema_uuid_module
 
 
 @pytest.fixture(scope="session")
@@ -61,7 +58,7 @@ def enable_filepath_feature(monkeypatch):
 @pytest.fixture(scope="session")
 def db_creds_test() -> Dict:
     return dict(
-        host=os.getenv("DJ_TEST_HOST", "fakeservices.datajoint.io"),
+        host=os.getenv("DJ_TEST_HOST", "db"),
         user=os.getenv("DJ_TEST_USER", "datajoint"),
         password=os.getenv("DJ_TEST_PASSWORD", "datajoint"),
     )
@@ -70,7 +67,7 @@ def db_creds_test() -> Dict:
 @pytest.fixture(scope="session")
 def db_creds_root() -> Dict:
     return dict(
-        host=os.getenv("DJ_HOST", "fakeservices.datajoint.io"),
+        host=os.getenv("DJ_HOST", "db"),
         user=os.getenv("DJ_USER", "root"),
         password=os.getenv("DJ_PASS", "password"),
     )
@@ -195,7 +192,7 @@ def connection_test(connection_root, prefix, db_creds_test):
 @pytest.fixture(scope="session")
 def s3_creds() -> Dict:
     return dict(
-        endpoint=os.environ.get("S3_ENDPOINT", "fakeservices.datajoint.io"),
+        endpoint=os.environ.get("S3_ENDPOINT", "minio:9000"),
         access_key=os.environ.get("S3_ACCESS_KEY", "datajoint"),
         secret_key=os.environ.get("S3_SECRET_KEY", "datajoint"),
         bucket=os.environ.get("S3_BUCKET", "datajoint.test"),
@@ -330,6 +327,8 @@ def schema_simp(connection_test, prefix):
     schema = dj.Schema(
         prefix + "_relational", schema_simple.LOCALS_SIMPLE, connection=connection_test
     )
+    schema(schema_simple.SelectPK)
+    schema(schema_simple.KeyPK)
     schema(schema_simple.IJ)
     schema(schema_simple.JI)
     schema(schema_simple.A)
@@ -423,20 +422,19 @@ def http_client():
 
 
 @pytest.fixture(scope="session")
-def minio_client_bare(s3_creds, http_client):
+def minio_client_bare(s3_creds):
     """Initialize MinIO with an endpoint and access/secret keys."""
     client = minio.Minio(
-        s3_creds["endpoint"],
+        endpoint=s3_creds["endpoint"],
         access_key=s3_creds["access_key"],
         secret_key=s3_creds["secret_key"],
-        secure=True,
-        http_client=http_client,
+        secure=False,
     )
     return client
 
 
 @pytest.fixture(scope="session")
-def minio_client(s3_creds, minio_client_bare):
+def minio_client(s3_creds, minio_client_bare, teardown=False):
     """Initialize a MinIO client and create buckets for testing session."""
     # Setup MinIO bucket
     aws_region = "us-east-1"
@@ -447,6 +445,8 @@ def minio_client(s3_creds, minio_client_bare):
             raise e
 
     yield minio_client_bare
+    if not teardown:
+        return
 
     # Teardown S3
     objs = list(minio_client_bare.list_objects(s3_creds["bucket"], recursive=True))

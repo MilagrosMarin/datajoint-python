@@ -1,8 +1,11 @@
-import types
-import pytest
 import inspect
-import datajoint as dj
+import types
 from inspect import getmembers
+
+import pytest
+
+import datajoint as dj
+
 from . import schema
 
 
@@ -210,6 +213,8 @@ def test_list_tables(schema_simp):
             "#website",
             "profile",
             "profile__website",
+            "#select_p_k",
+            "#key_p_k",
         ]
     )
     actual = set(schema_simp.list_tables())

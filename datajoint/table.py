@@ -1,30 +1,32 @@
 import collections
-import itertools
+import csv
 import inspect
+import itertools
+import json
+import logging
 import platform
+import re
+import uuid
+from pathlib import Path
+from typing import Union
+
 import numpy as np
 import pandas
-import logging
-import uuid
-import csv
-import re
-import json
-from pathlib import Path
-from .settings import config
-from .declare import declare, alter
-from .condition import make_condition
-from .expression import QueryExpression
+
 from . import blob
-from .utils import user_choice, get_master, is_camel_case
-from .heading import Heading
+from .condition import make_condition
+from .declare import alter, declare
 from .errors import (
-    DuplicateError,
     AccessError,
     DataJointError,
-    UnknownAttributeError,
+    DuplicateError,
     IntegrityError,
+    UnknownAttributeError,
 )
-from typing import Union
+from .expression import QueryExpression
+from .heading import Heading
+from .settings import config
+from .utils import get_master, is_camel_case, user_choice
 from .version import __version__ as version
 
 logger = logging.getLogger(__name__.split(".")[0])
@@ -196,7 +198,6 @@ class Table(QueryExpression):
 
     def children(self, primary=None, as_objects=False, foreign_key_info=False):
         """
-
         :param primary: if None, then all children are returned. If True, then only foreign keys composed of
             primary key attributes are considered.  If False, return foreign keys including at least one
             secondary attribute.
@@ -218,7 +219,6 @@ class Table(QueryExpression):
 
     def descendants(self, as_objects=False):
         """
-
         :param as_objects: False - a list of table names; True - a list of table objects.
         :return: list of tables descendants in topological order.
         """
@@ -230,7 +230,6 @@ class Table(QueryExpression):
 
     def ancestors(self, as_objects=False):
         """
-
         :param as_objects: False - a list of table names; True - a list of table objects.
         :return: list of tables ancestors in topological order.
         """
@@ -246,6 +245,7 @@ class Table(QueryExpression):
 
         :param as_objects: if False (default), the output is a dict describing the foreign keys. If True, return table objects.
         """
+        self.connection.dependencies.load(force=False)
         nodes = [
             node
             for node in self.connection.dependencies.nodes
@@ -427,7 +427,8 @@ class Table(QueryExpression):
             self.connection.query(query)
             return
 
-        field_list = []  # collects the field list from first row (passed by reference)
+        # collects the field list from first row (passed by reference)
+        field_list = []
         rows = list(
             self.__make_row_to_insert(row, field_list, ignore_extra_fields)
             for row in rows
@@ -520,7 +521,8 @@ class Table(QueryExpression):
                     delete_count = table.delete_quick(get_count=True)
                 except IntegrityError as error:
                     match = foreign_key_error_regexp.match(error.args[0]).groupdict()
-                    if "`.`" not in match["child"]:  # if schema name missing, use table
+                    # if schema name missing, use table
+                    if "`.`" not in match["child"]:
                         match["child"] = "{}.{}".format(
                             table.full_table_name.split(".")[0], match["child"]
                         )
@@ -644,6 +646,8 @@ class Table(QueryExpression):
                 logger.warn("Nothing to delete.")
             if transaction:
                 self.connection.cancel_transaction()
+        elif not transaction:
+            logger.info("Delete completed")
         else:
             if not safemode or user_choice("Commit deletes?", default="no") == "yes":
                 if transaction:
@@ -962,7 +966,8 @@ def lookup_class_name(name, context, depth=3):
     while nodes:
         node = nodes.pop(0)
         for member_name, member in node["context"].items():
-            if not member_name.startswith("_"):  # skip IPython's implicit variables
+            # skip IPython's implicit variables
+            if not member_name.startswith("_"):
                 if inspect.isclass(member) and issubclass(member, Table):
                     if member.full_table_name == name:  # found it!
                         return ".".join([node["context_name"], member_name]).lstrip(".")

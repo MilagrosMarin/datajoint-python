@@ -2,15 +2,33 @@
 A simple, abstract schema to test relational algebra
 """
 
-import random
-import datajoint as dj
-import itertools
 import hashlib
+import inspect
+import itertools
+import random
 import uuid
+from datetime import date, timedelta
+
 import faker
 import numpy as np
-from datetime import date, timedelta
-import inspect
+
+import datajoint as dj
+
+
+class SelectPK(dj.Lookup):
+    definition = """  # tests sql keyword escaping
+    id: int
+    select  : int
+    """
+    contents = list(dict(id=i, select=i * j) for i in range(3) for j in range(4, 0, -1))
+
+
+class KeyPK(dj.Lookup):
+    definition = """  # tests sql keyword escaping
+    id   : int
+    key  : int
+    """
+    contents = list(dict(id=i, key=i + j) for i in range(3) for j in range(4, 0, -1))
 
 
 class IJ(dj.Lookup):

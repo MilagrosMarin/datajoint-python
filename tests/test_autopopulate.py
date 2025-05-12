@@ -1,7 +1,9 @@
-import pytest
-from datajoint import DataJointError
-import datajoint as dj
 import pymysql
+import pytest
+
+import datajoint as dj
+from datajoint import DataJointError
+
 from . import schema
 
 
@@ -47,6 +49,18 @@ def test_populate_with_success_count(subject, experiment, trial):
     ret = trial.populate(restriction, suppress_errors=True)
     success_count = ret["success_count"]
     assert len(trial.key_source & trial) == success_count
+
+
+def test_populate_key_list(subject, experiment, trial):
+    # test simple populate
+    assert subject, "root tables are empty"
+    assert not experiment, "table already filled?"
+    keys = experiment.key_source.fetch("KEY", order_by="KEY")
+    n = 3
+    assert len(keys) > n
+    keys = keys[:n]
+    ret = experiment.populate(keys=keys)
+    assert n == ret["success_count"]
 
 
 def test_populate_exclude_error_and_ignore_jobs(schema_any, subject, experiment):
