@@ -1,4 +1,4 @@
-# Welcome to DataJoint for Python
+# Welcome to DataJoint for Python!
 
 <table>
 <!-- Thank Zarr for providing badge insights! -->
